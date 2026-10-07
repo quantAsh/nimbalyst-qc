@@ -11,6 +11,9 @@ import {
 } from '../../atoms/trackers';
 import { windowModeAtom } from '../../atoms/windowMode';
 import { initDeepLinkListeners } from '../deepLinkListeners';
+import { sessionDraftInputAtom, sessionDraftHydratedAtom, sessionDraftLocalModifiedAtAtom } from '../../atoms/sessions';
+import { dispatchOpenSessionInTab } from '../../actions/sessionHistoryActions';
+vi.mock('../../actions/sessionHistoryActions', () => ({ dispatchOpenSessionInTab: vi.fn(async () => undefined) }));
 import { normalizeSettingsDestination } from '../../../components/Settings/settingsRoutes';
 import {
   consumeInboxRowSelectionRequest,
@@ -253,5 +256,68 @@ describe('team-invitation deep-link handoff', () => {
     store.set(openSettingsCommandAtom, null);
     options?.action?.onClick();
     expect(resolvedSettingsDestination()).toEqual({ scope: 'account', category: 'account' });
+  });
+});
+
+describe('QC build deep-link handoff', () => {
+  let cleanup: (() => void) | undefined;
+  let handlers: Record<string, (data: any) => void>;
+  let pending: { workspacePath: string; sessionId?: string } | null;
+
+  beforeEach(() => {
+    handlers = {};
+    pending = null;
+    store.set(sessionDraftInputAtom('native-session'), '');
+    store.set(sessionDraftHydratedAtom('native-session'), false);
+    store.set(sessionDraftLocalModifiedAtAtom('native-session'), 0);
+    vi.mocked(dispatchOpenSessionInTab).mockClear();
+    store.set(activeWorkspacePathAtom, '/workspace/build');
+    Object.defineProperty(window, 'electronAPI', {
+      configurable: true,
+      value: {
+        aiLoadSession: vi.fn(async (sessionId: string, workspacePath: string) => ({ id: sessionId, workspacePath, model: 'claude-code:sonnet', draftInput: 'Gateway objective', messages: [] })),
+        invoke: vi.fn(async (channel: string, workspacePath: string) => {
+          if (channel !== 'deep-link:consume-pending-build' || pending?.workspacePath !== workspacePath) return null;
+          const result = pending;
+          pending = null;
+          return result;
+        }),
+        on: vi.fn((event: string, handler: (data: any) => void) => {
+          handlers[event] = handler;
+          return () => delete handlers[event];
+        }),
+      },
+    });
+  });
+
+  afterEach(() => {
+    cleanup?.();
+    cleanup = undefined;
+    store.set(activeWorkspacePathAtom, null);
+  });
+
+  it('opens the actual native session once when a live nudge races initial delivery', async () => {
+    pending = { workspacePath: '/workspace/build', sessionId: 'native-session' };
+    cleanup = initDeepLinkListeners();
+    handlers['deep-link:open-build']({ workspacePath: '/workspace/build', sessionId: 'native-session' });
+    await vi.waitFor(() => expect(dispatchOpenSessionInTab).toHaveBeenCalledTimes(1));
+    expect(dispatchOpenSessionInTab).toHaveBeenCalledWith('native-session');
+    expect(store.get(windowModeAtom)).toBe('agent');
+    expect(store.get(sessionDraftInputAtom('native-session'))).toBe('Gateway objective');
+  });
+
+  it('selects a project workspace without inventing a session tab', async () => {
+    cleanup = initDeepLinkListeners();
+    pending = { workspacePath: '/workspace/target' };
+    handlers['deep-link:open-build']({ workspacePath: '/workspace/target' });
+    await vi.waitFor(() => expect(store.get(activeWorkspacePathAtom)).toBe('/workspace/target'));
+    expect(dispatchOpenSessionInTab).not.toHaveBeenCalled();
+  });
+
+  it('does not open a session supplied by an unconsumed event', async () => {
+    cleanup = initDeepLinkListeners();
+    handlers['deep-link:open-build']({ workspacePath: '/workspace/build', sessionId: 'unknown-session' });
+    await Promise.resolve();
+    expect(dispatchOpenSessionInTab).not.toHaveBeenCalled();
   });
 });

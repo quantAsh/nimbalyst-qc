@@ -17,6 +17,7 @@
  */
 
 import type { RawMessage } from '../TranscriptTransformer';
+import { parseTurnReview } from '../turnReview';
 import { parseMcpToolName } from '../utils';
 import { buildCodexToolLookupId } from '../../toolLookupIds';
 import type {
@@ -196,6 +197,13 @@ export class CodexAppServerRawParser implements IRawMessageParser {
     }
 
     switch (method) {
+      case 'turn/plan/updated':
+      case 'turn/diff/updated': {
+        if (msg.sessionId !== context.sessionId) break;
+        const review = parseTurnReview(method, params as Record<string, unknown>, msg.id);
+        if (review) descriptors.push({type:'turn_review_updated', review, createdAt:msg.createdAt});
+        break;
+      }
       case 'item/started': {
         const item = params.item;
         if (!item || typeof item !== 'object') break;

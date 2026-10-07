@@ -15,6 +15,7 @@ import { getMostRecentlyFocusedWorkspaceWindow, windowStates, windowFocusOrder }
 import { windows } from "../window/windowState";
 import { workspaceToWindowMap } from "./mcpWorkspaceResolver";
 import { requireMcpAuth } from "./mcpAuth";
+import { handleQcBuildRequest } from '../services/QcBuildGatewayHost';
 import { getAllowedClipOrigin, hasAllowedClipContentType } from "./clipRequestGuards";
 import { withTrackerSchemaWorkspace } from "../services/tracker/trackerSchemaScope";
 
@@ -754,6 +755,7 @@ async function tryCreateServer(port: number): Promise<any> {
       async (req: IncomingMessage, res: ServerResponse) => {
         const parsedUrl = parseUrl(req.url || "", true);
         const pathname = parsedUrl.pathname;
+        if (await handleQcBuildRequest(req, res, pathname || null)) return;
         const mcpSessionIdHeader = getMcpSessionIdHeader(req);
 
         // Handle CORS preflight.

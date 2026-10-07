@@ -1,4 +1,5 @@
 import { autoUpdater } from 'electron-updater';
+import { QC_UPDATES_ENABLED, QC_UPDATE_NOTICE } from '../qcIdentity';
 import { app, BrowserWindow, dialog } from 'electron';
 import log from 'electron-log/main';
 import * as fs from 'fs';
@@ -54,6 +55,20 @@ export class AutoUpdaterService {
   private lastUpdateErrorKey: string | null = null;
 
   constructor() {
+    if (!QC_UPDATES_ENABLED) {
+      autoUpdater.autoDownload = false;
+      autoUpdater.autoInstallOnAppQuit = false;
+      const disabled = () => {
+        this.sendToFrontmostWindow('update-toast:error', { message: QC_UPDATE_NOTICE });
+        return { disabled: true, reason: QC_UPDATE_NOTICE };
+      };
+      for (const channel of ['check-for-updates', 'download-update', 'quit-and-install']) safeHandle(channel, disabled);
+      for (const channel of ['update-toast:download', 'update-toast:install', 'update-toast:install-when-idle']) safeOn(channel, disabled);
+      safeHandle('get-current-version', () => app.getVersion());
+      safeHandle('update:has-active-sessions', () => ({ hasActiveSessions: hasActiveStreamingSessions() }));
+      return;
+    }
+
     // Configure electron-updater logger
     log.transports.file.level = 'info';
     autoUpdater.logger = log;
@@ -75,6 +90,7 @@ export class AutoUpdaterService {
   }
 
   private configureFeedURL() {
+    if (!QC_UPDATES_ENABLED) return;
     const channel = getReleaseChannel();
 
     if (channel === 'alpha') {
@@ -352,6 +368,7 @@ export class AutoUpdaterService {
   }
 
   private performQuitAndInstall() {
+    if (!QC_UPDATES_ENABLED) return;
     setImmediate(async () => {
       try {
         log.info('Performing quit and install...');
@@ -555,6 +572,7 @@ export class AutoUpdaterService {
   }
 
   public startAutoUpdateCheck(intervalMinutes = 60) {
+    if (!QC_UPDATES_ENABLED) return;
     // Initial check after 30 seconds
     setTimeout(() => {
       this.checkForUpdates();
@@ -578,6 +596,7 @@ export class AutoUpdaterService {
   }
 
   public async checkForUpdates() {
+    if (!QC_UPDATES_ENABLED) return;
     if (this.isCheckingForUpdate) {
       log.info('Already checking for updates, skipping...');
       return;
@@ -592,6 +611,10 @@ export class AutoUpdaterService {
   }
 
   public async checkForUpdatesWithUI() {
+    if (!QC_UPDATES_ENABLED) {
+      this.sendToFrontmostWindow('update-toast:error', { message: QC_UPDATE_NOTICE });
+      return;
+    }
     if (this.isCheckingForUpdate) {
       // Already checking, don't show anything - the checking toast is already visible
       return;
@@ -631,6 +654,7 @@ export class AutoUpdaterService {
   }
 
   private async checkAndDownloadLatest() {
+    if (!QC_UPDATES_ENABLED) return;
     try {
       // Previously this method called `autoUpdater.checkForUpdates()` immediately
       // before `downloadUpdate()` to "get the absolute latest version" - but on

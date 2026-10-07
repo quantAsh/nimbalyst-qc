@@ -17,6 +17,7 @@ import {
   ModelIdentifier,
   ChatAttachment,
 } from '../types';
+import { validateSteeringInput } from '../steering';
 import { AgentCapabilities, BUILTIN_AGENT_CAPABILITIES } from '../agentCapabilities';
 import { CodexSDKProtocol } from '../protocols/CodexSDKProtocol';
 import { CodexAppServerProtocol, type CodexAppServerHostBindings } from '../protocols/CodexAppServerProtocol';
@@ -57,6 +58,8 @@ export type CodexTransport = 'sdk' | 'app-server';
  */
 export interface CodexProtocol extends AgentProtocol {
   setApiKey?(apiKey: string): void;
+  getActiveTurnId?(session: ProtocolSession): string | null;
+  steerTurn?(session: ProtocolSession, expectedTurnId: string, text: string): Promise<{ turnId: string }>;
 }
 
 interface ProtocolSessionIdleScheduler {
@@ -2815,10 +2818,29 @@ export class OpenAICodexProvider extends BaseAgentProvider {
    * `thread/compact/start` exists on the app-server, not on the legacy SDK
    * path, and this provider can be constructed with either.
    */
+  getSteeringTarget(sessionId: string): { turnId: string } | null {
+    if (!this.getAgentCapabilities().steering) return null;
+    const session = this.liveProtocolSessions.get(sessionId);
+    const turnId = session && this.protocol.getActiveTurnId!(session);
+    return turnId ? { turnId } : null;
+  }
+
+  async steerTurn(sessionId: string, expectedTurnId: string, text: string): Promise<{ turnId: string }> {
+    validateSteeringInput(expectedTurnId, text);
+    if (!this.getAgentCapabilities().steering) throw new Error('This provider transport does not support steering. Queue your message instead.');
+    const session = this.liveProtocolSessions.get(sessionId);
+    if (!session) throw new Error('There is no active turn for this session. Your draft was kept.');
+    const result = await this.protocol.steerTurn!(session, expectedTurnId, text);
+    // Only accepted input enters the persisted, provider-neutral transcript.
+    await this.logAgentMessageBestEffort(sessionId, 'input', text, { metadata: { steering: true, turnId: expectedTurnId } });
+    return result;
+  }
+
   getAgentCapabilities(): AgentCapabilities {
     return {
       ...BUILTIN_AGENT_CAPABILITIES['openai-codex'],
       compaction: this.supportsCompaction() ? 'rpc' : 'unsupported',
+      steering: this.transport === 'app-server' && typeof this.protocol.getActiveTurnId === 'function' && typeof this.protocol.steerTurn === 'function',
     };
   }
 

@@ -587,6 +587,8 @@ const bridge: ExtensionAgentBridge = {
     }
     const c = entry.contribution;
     return {
+      steering: false, // The extension bridge does not expose turn steering.
+
       slashCommands: c.supportsSlashCommands ?? false,
       skills: c.supportsSkills ?? false,
       compaction: c.compaction ?? 'unsupported',

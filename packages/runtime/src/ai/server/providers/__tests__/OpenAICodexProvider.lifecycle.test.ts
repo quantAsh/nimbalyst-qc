@@ -121,6 +121,30 @@ function createHarness(options: {
 }
 
 describe('OpenAICodexProvider app-server lifecycle retention', () => {
+  it('steers the retained live session and logs only accepted input', async () => {
+    const { provider, protocolSession } = createHarness();
+    const protocol = (provider as any).protocol;
+    protocol.getActiveTurnId = vi.fn(() => 'turn-live');
+    protocol.steerTurn = vi.fn(async () => ({ turnId: 'turn-live' }));
+    const log = vi.spyOn(provider as any, 'logAgentMessageBestEffort').mockResolvedValue(undefined);
+    expect(provider.getAgentCapabilities().steering).toBe(true);
+    expect(provider.getSteeringTarget('session-lifecycle')).toBeNull();
+    await drainTurn(provider, 'Start');
+    log.mockClear();
+    expect(provider.getSteeringTarget('session-lifecycle')).toEqual({turnId:'turn-live'});
+    await expect(provider.steerTurn('session-lifecycle','turn-live','Focus tests')).resolves.toEqual({turnId:'turn-live'});
+    expect(protocol.steerTurn).toHaveBeenCalledWith(protocolSession,'turn-live','Focus tests');
+    expect(log).toHaveBeenCalledWith('session-lifecycle','input','Focus tests',{metadata:{steering:true,turnId:'turn-live'}});
+    log.mockClear();
+    protocol.steerTurn.mockRejectedValueOnce(new Error('Turn ended'));
+    await expect(provider.steerTurn('session-lifecycle','turn-live','Late')).rejects.toThrow('Turn ended');
+    expect(log).not.toHaveBeenCalled();
+    (provider as any).transport = 'sdk';
+    expect(provider.getAgentCapabilities().steering).toBe(false);
+    await expect(provider.steerTurn('session-lifecycle','turn-live','Legacy')).rejects.toThrow(/transport/);
+    provider.destroy();
+  });
+
   beforeEach(() => {
     configureMcpServers({ mcpServerPort: null, extensionDevServerPort: null });
     OpenAICodexProvider.setTrustChecker(() => ({ trusted: true, mode: 'allow-all' }));

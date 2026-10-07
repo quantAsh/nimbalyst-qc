@@ -138,6 +138,42 @@ describe('CodexAppServerProtocol', () => {
     if (!child.killed) child.kill();
   });
 
+  it('steers only the expected active turn without interrupting or starting another turn', async () => {
+    const protocol = new CodexAppServerProtocol();
+    const pending = protocol.createSession({ workspacePath: '/tmp/ws' });
+    const init = await nextWrittenMatching(child, 'initialize');
+    child.emitLine({ id: init.id, result: {} });
+    const start = await nextWrittenMatching(child, 'thread/start');
+    child.emitLine({ id: start.id, result: { thread: { id: 'thread-steer' } } });
+    const session = await pending;
+    const adapter = protocol as any;
+    expect(adapter.getActiveTurnId(session)).toBeNull();
+    await expect(adapter.steerTurn(session, 'old-turn', 'Focus tests')).rejects.toThrow(/active turn/i);
+    const stream = protocol.sendMessage(session, { content: 'Work' });
+    const events = (async () => { for await (const _ of stream) { /* drain */ } })();
+    const turn = await nextWrittenMatching(child, 'turn/start');
+    child.emitLine({ id: turn.id, result: { turn: { id: 'turn-steer' } } });
+    await vi.waitFor(() => expect(adapter.getActiveTurnId(session)).toBe('turn-steer'));
+    await expect(adapter.steerTurn(session, 'old-turn', 'Focus tests')).rejects.toThrow(/active turn/i);
+    const steering = adapter.steerTurn(session, 'turn-steer', 'Focus tests');
+    const req = await nextWrittenMatching(child, 'turn/steer');
+    expect(req.params).toEqual({ threadId: 'thread-steer', expectedTurnId: 'turn-steer', input: [{ type: 'text', text: 'Focus tests' }] });
+    child.emitLine({ id: req.id, error: { code: -32600, message: 'Active turn changed' } });
+    await expect(steering).rejects.toThrow('Active turn changed');
+    const retry = adapter.steerTurn(session, 'turn-steer', 'Focus tests');
+    await vi.waitFor(() => expect(child.writtenLines.filter((l: any) => l.method === 'turn/steer')).toHaveLength(2));
+    const second = child.writtenLines.filter((l: any) => l.method === 'turn/steer').at(-1) as any;
+    child.emitLine({ id: second.id, result: { turnId: 'turn-steer' } });
+    await expect(retry).resolves.toEqual({ turnId: 'turn-steer' });
+    expect(child.writtenLines.filter((l: any) => l.method === 'turn/start')).toHaveLength(1);
+    expect(child.writtenLines.some((l: any) => l.method === 'turn/interrupt')).toBe(false);
+    child.emitLine({ method: 'turn/completed', params: { threadId: 'thread-steer', turn: { id: 'turn-steer', status: 'completed' } } });
+    await events;
+    expect(adapter.getActiveTurnId(session)).toBeNull();
+    await expect(adapter.steerTurn(session, 'turn-steer', 'Late input')).rejects.toThrow(/active turn/i);
+    protocol.cleanupSession(session);
+  });
+
   it('spawns the codex binary, completes the initialize handshake, and starts a thread', async () => {
     const protocol = new CodexAppServerProtocol();
     const sessionPromise = protocol.createSession({
@@ -1023,6 +1059,8 @@ describe('CodexAppServerProtocol', () => {
     await new Promise((r) => setTimeout(r, 20));
 
     controller.abort();
+    expect(protocol.getActiveTurnId(session)).toBeNull();
+    await expect(protocol.steerTurn(session, 'turn-1', 'Late guidance')).rejects.toThrow(/active turn/i);
 
     // The interrupt must go out even though no further notification arrives,
     // and it MUST carry the active turnId. The app server rejects the request

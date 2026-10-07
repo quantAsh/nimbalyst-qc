@@ -8,6 +8,7 @@
  */
 
 import type { TranscriptWriter } from './TranscriptWriter';
+import type { TurnReviewSnapshot } from './turnReview';
 import type { ITranscriptEventStore, TranscriptEvent } from './types';
 import type { CanonicalEventDescriptor } from './parsers/IRawMessageParser';
 
@@ -49,6 +50,22 @@ export async function processDescriptor(
   subagentEventIds: Map<string, number>,
 ): Promise<TranscriptEvent | null> {
   switch (desc.type) {
+    case 'turn_review_updated': {
+      const patch = desc.review;
+      const id = 'qc-turn-review:' + JSON.stringify([patch.threadId, patch.turnId]);
+      let event = await store.findByProviderToolCallId(id, sessionId);
+      let previous: Partial<TurnReviewSnapshot> = {};
+      if (event) {
+        try { previous = JSON.parse(String((event.payload as Record<string, unknown>).result || '{}')); } catch { /* rebuild this derived snapshot */ }
+      }
+      const field = patch.plan !== undefined ? 'planRevision' : 'diffRevision';
+      if (patch.revision <= (previous[field] ?? -1)) return null;
+      const review = {...previous, ...patch, revision:Math.max(previous.revision ?? -1,patch.revision), [field]:patch.revision};
+      if (!event) event = await writer.createToolCall(sessionId, { toolName:'TurnReview', toolDisplayName:'Turn review', arguments:{threadId:patch.threadId,turnId:patch.turnId}, providerToolCallId:id, createdAt:desc.createdAt });
+      await writer.updateToolCall(event.id, {status:'completed', result:JSON.stringify(review)});
+      return store.getEventById(event.id);
+    }
+
     case 'user_message': {
       return writer.appendUserMessage(sessionId, desc.text, {
         mode: desc.mode,

@@ -27,6 +27,7 @@ import { ClaudeCliNotInstalledNotice } from './ClaudeCliNotInstalledNotice';
 import type { InteractiveWidgetHost, PermissionScope } from '@nimbalyst/runtime/ui/AgentTranscript/components/CustomToolWidgets/InteractiveWidgetHost';
 import type { TodoItem } from '@nimbalyst/runtime/ui/AgentTranscript/types';
 import { isToolLikeMessage } from '@nimbalyst/runtime/ui/AgentTranscript/utils/messageTypeHelpers';
+import { SteeringControl } from '@nimbalyst/runtime/ui/AgentTranscript/components/SteeringControl';
 import { AIInput, AIInputRef } from './AIInput';
 import { PromptQueueList } from './PromptQueueList';
 import { TranscriptEmbeddedFileCard } from './TranscriptEmbeddedFileCard';
@@ -381,7 +382,17 @@ const SessionAIInput = forwardRef<AIInputRef, SessionAIInputProps>(function Sess
     return () => clearTimeout(timeoutId);
   }, [sessionId, draftInput, draftHydrated, draftLocalModifiedAt, workspacePath]);
 
+  const getSteeringTarget = useCallback(() => window.electronAPI.invoke('ai:getSteeringTarget', sessionId, workspacePath), [sessionId, workspacePath]);
+  const sendSteering = useCallback((turnId: string, text: string) => window.electronAPI.invoke('ai:steerTurn', sessionId, workspacePath, turnId, text), [sessionId, workspacePath]);
+  const acceptSteering = useCallback((text: string) => {
+    // Preserve edits typed while the acknowledgement was in flight.
+    if (store.get(sessionDraftInputAtom(sessionId)) === text) {
+      handleChange('');
+      store.set(clearAIInputHistoryAtom, sessionId);
+    }
+  }, [sessionId, handleChange]);
   return (
+    <>
     <AIInput
       ref={ref}
       value={draftInput}
@@ -393,6 +404,8 @@ const SessionAIInput = forwardRef<AIInputRef, SessionAIInputProps>(function Sess
       onAttachmentRemove={enableAttachments ? onAttachmentRemove : undefined}
       {...rest}
     />
+    <SteeringControl key={workspacePath + ':' + sessionId} loading={!!rest.isLoading} text={draftInput} hasAttachments={!!draftAttachments?.length} getTarget={getSteeringTarget} send={sendSteering} onAccepted={acceptSteering} />
+    </>
   );
 });
 

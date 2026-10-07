@@ -8,8 +8,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+- Steer active Codex turns without interrupting, while preserving queued messages for other providers.
+
+- QC fork: separate desktop identity/profile/URL scheme, disabled upstream updates, and replayable Codex turn plan/diff review cards.
+
 ### Added
 <!-- New features go here -->
+- Venture OS can hand off objectives to owner-reviewed desktop drafts or isolated tenant workers, with workspace-scoped evidence and cancellation.
 
 ### Changed
 <!-- Changes to existing functionality go here -->

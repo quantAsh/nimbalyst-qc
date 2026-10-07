@@ -11,6 +11,7 @@
  */
 
 import type { RawMessage } from '../TranscriptTransformer';
+import type { TurnReviewPatch } from '../turnReview';
 import type { TranscriptEvent, InteractivePromptPayload, TurnEndedPayload, UserMessagePayload, PermissionDeniedReasonType } from '../types';
 
 // ---------------------------------------------------------------------------
@@ -181,7 +182,10 @@ export interface TurnEndedDescriptor {
   createdAt?: Date;
 }
 
+export interface TurnReviewDescriptor { type: 'turn_review_updated'; review: TurnReviewPatch; createdAt?: Date }
+
 export type CanonicalEventDescriptor =
+  | TurnReviewDescriptor
   | UserMessageDescriptor
   | AssistantMessageDescriptor
   | SystemMessageDescriptor

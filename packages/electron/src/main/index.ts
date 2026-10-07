@@ -33,6 +33,7 @@ import { setSafeModeSessionStateProtection } from './session/safeModeSessionStat
 import { isSafeModeArgument } from './session/startupSafeMode';
 import { getRestartSignalPath } from './utils/appPaths';
 import { planProtocolRegistration } from './utils/protocolRegistration';
+import { QC_URL_SCHEME, isNimbalystDeepLink, normalizeNimbalystDeepLink } from './qcIdentity';
 import {
     dispatchAppActionLink,
     type AppAction,
@@ -211,6 +212,8 @@ import { sessionFileTracker } from './services/SessionFileTracker';
 import { historyManager } from './HistoryManager';
 import { readFileContentOrNull } from './services/ai/aiServiceUtils';
 import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AISessionsRepository';
+import { configureQcBuildGateway, resolveQcBuildLink } from './services/QcBuildGatewayHost';
+import { getSessionStateManager } from '@nimbalyst/runtime/ai/server/SessionStateManager';
 import { isMCPServerEnabledForProvider, MCP_PROVIDER_IDS } from '@nimbalyst/runtime/types/MCPServerConfig';
 import type { MCPServerConfig } from '@nimbalyst/runtime/types/MCPServerConfig';
 import { logger, overrideConsole } from './utils/logger';
@@ -661,16 +664,16 @@ const protocolPlan = planProtocolRegistration({
 });
 
 if (protocolPlan.action === 'register-packaged') {
-    app.removeAsDefaultProtocolClient('nimbalyst');
-    app.setAsDefaultProtocolClient('nimbalyst');
+    app.removeAsDefaultProtocolClient(QC_URL_SCHEME);
+    app.setAsDefaultProtocolClient(QC_URL_SCHEME);
 } else if (protocolPlan.action === 'register-dev') {
     // Remove any stale registration first (e.g. from packaged builds or Electron Fiddle)
-    app.removeAsDefaultProtocolClient('nimbalyst', protocolPlan.execPath, protocolPlan.args);
-    app.setAsDefaultProtocolClient('nimbalyst', protocolPlan.execPath, protocolPlan.args);
-    logger.main.info(`[DeepLink] Registered nimbalyst:// protocol for dev mode (exec: ${protocolPlan.execPath}, arg: ${protocolPlan.args.join(' ')})`);
-    logger.main.info(`[DeepLink] isDefaultProtocolClient: ${app.isDefaultProtocolClient('nimbalyst', protocolPlan.execPath, protocolPlan.args)}`);
+    app.removeAsDefaultProtocolClient(QC_URL_SCHEME, protocolPlan.execPath, protocolPlan.args);
+    app.setAsDefaultProtocolClient(QC_URL_SCHEME, protocolPlan.execPath, protocolPlan.args);
+    logger.main.info(`[DeepLink] Registered qc-nimbalyst:// protocol for dev mode (exec: ${protocolPlan.execPath}, arg: ${protocolPlan.args.join(' ')})`);
+    logger.main.info(`[DeepLink] isDefaultProtocolClient: ${app.isDefaultProtocolClient(QC_URL_SCHEME, protocolPlan.execPath, protocolPlan.args)}`);
 } else {
-    logger.main.info(`[DeepLink] Not claiming nimbalyst:// scheme: ${protocolPlan.reason}`);
+    logger.main.info(`[DeepLink] Not claiming qc-nimbalyst:// scheme: ${protocolPlan.reason}`);
 }
 
 registerLinuxAppImageProtocolHandler();
@@ -705,7 +708,7 @@ if (!allowMultipleInstances) {
             logger.main.info(`[SingleInstance] Found file in argv: ${fileArg}`);
             try { writeFileSync(pendingOpenFilePath, fileArg, 'utf-8'); } catch (_) {}
             app.quit();
-        } else if (process.argv.find(arg => arg.startsWith('nimbalyst://'))) {
+        } else if (process.argv.find(arg => isNimbalystDeepLink(arg))) {
             // Primary instance will handle via second-instance event; quit immediately
             logger.main.info('[SingleInstance] Second instance has deep link arg, quitting immediately');
             app.quit();
@@ -740,7 +743,7 @@ if (!allowMultipleInstances) {
             logger.main.info('[SingleInstance] second-instance event, argv:', argv);
 
             // On Windows the protocol URL is passed as the last argument
-            const deepLinkUrl = argv.find(arg => arg.startsWith('nimbalyst://'));
+            const deepLinkUrl = argv.find(arg => isNimbalystDeepLink(arg));
             if (deepLinkUrl) {
                 logger.main.info('[SingleInstance] Found deep link in argv:', summarizeDeepLink(deepLinkUrl));
                 handleDeepLink(deepLinkUrl);
@@ -749,7 +752,7 @@ if (!allowMultipleInstances) {
             // Check argv for file paths (Windows/Linux pass files as args)
             const fileArg = argv.find(arg =>
                 !arg.startsWith('-') &&
-                !arg.startsWith('nimbalyst://') &&
+                !isNimbalystDeepLink(arg) &&
                 arg !== argv[0] &&
                 path.isAbsolute(arg) &&
                 existsSync(arg) &&
@@ -822,6 +825,15 @@ if (!allowMultipleInstances) {
 
 // Track pending deep link URL
 let pendingDeepLinkUrl: string | null = null;
+const pendingBuildLinks = new Map<string, { workspacePath: string; sessionId?: string }>();
+safeHandle('deep-link:consume-pending-build', (event, workspacePath: string) => {
+    const senderPath = resolveActiveWorkspacePathForWindowId(getWindowIdForWindow(BrowserWindow.fromWebContents(event.sender)));
+    const ownerWindow = workspacePath ? findWindowByWorkspace(workspacePath) : null;
+    if (!workspacePath || (senderPath !== workspacePath && ownerWindow?.webContents.id !== event.sender.id)) return null;
+    const pending = pendingBuildLinks.get(workspacePath) || null;
+    pendingBuildLinks.delete(workspacePath);
+    return pending;
+});
 
 // Per-workspace queue of shared-document deep links waiting for the renderer
 // to be ready (e.g., a window we just created for the project). Drained via
@@ -945,6 +957,7 @@ const SENSITIVE_DEEP_LINK_PARAMS = new Set([
 function summarizeDeepLink(url: string): { host: string; pathname: string; params: Record<string, string> } | { rawUrl: string; parseError: string } {
     try {
         const parsed = new URL(url);
+
         const params: Record<string, string> = {};
         for (const [key, value] of parsed.searchParams.entries()) {
             params[key] = SENSITIVE_DEEP_LINK_PARAMS.has(key) ? `[redacted:${value.length}]` : value;
@@ -999,8 +1012,31 @@ function handleAppActionLink(
 
 // Handle deep link URL
 async function handleDeepLink(url: string): Promise<void> {
+    url = normalizeNimbalystDeepLink(url);
     try {
         const parsed = new URL(url);
+
+        if (parsed.host === 'session' || parsed.host === 'project') {
+            const target = resolveQcBuildLink(url);
+            if (!target) {
+                logger.main.warn('[DeepLink] Unknown or unbound QC build target');
+                return;
+            }
+            if (target.sessionId) {
+                const native = await AISessionsRepository.get(target.sessionId);
+                if (!native || native.workspacePath !== target.workspacePath) return;
+            }
+            pendingBuildLinks.set(target.workspacePath, target);
+            const existing = findWindowByWorkspace(target.workspacePath);
+            if (existing && !existing.isDestroyed()) {
+                if (existing.isMinimized()) existing.restore();
+                existing.focus();
+                existing.webContents.send('deep-link:open-build', target);
+            } else {
+                createWindow(false, true, target.workspacePath);
+            }
+            return;
+        }
 
         // Legacy scheme callbacks are routed through the same validator, which
         // rejects everything except a nonce-bearing 127.0.0.1 callback whose
@@ -1600,7 +1636,7 @@ function parseCommandLineArgs() {
         } else if (arg === '--filter' && i + 1 < args.length) {
             pendingFilter = args[i + 1];
             logger.main.info(`✓ Filter from CLI: ${pendingFilter}`);
-        } else if (arg.startsWith('nimbalyst://')) {
+        } else if (isNimbalystDeepLink(arg)) {
             pendingDeepLinkUrl = arg;
             logger.main.info(`[SingleInstance] Found deep link in argv: ${arg.substring(0, 60)}...`);
         } else if (!arg.startsWith('--') && !arg.startsWith('-')) {
@@ -2635,6 +2671,23 @@ app.whenReady().then(async () => {
         throw new Error('AI session store unavailable after database initialization');
     }
     aiService = new AIService(runtimeSessionStore);
+    const buildAiService = aiService;
+    try {
+        configureQcBuildGateway({
+            createDraft: (binding, request) => buildAiService.createGatewayDraft(binding, request),
+            cancelSession: id => buildAiService.cancelGatewaySession(id),
+            openSession: id => handleDeepLink(`nimbalyst://session/${id}`),
+            getSession: async id => {
+                const session = await AISessionsRepository.get(id);
+                if (!session?.workspacePath) return null;
+                const current = getSessionStateManager().getSessionState(id);
+                const status = session.isArchived ? 'cancelled' : current?.status === 'running' ? 'running' : current?.status === 'error' ? 'failed' : current?.status === 'waiting_for_input' ? 'awaiting_approval' : session.draftInput ? 'awaiting_approval' : 'idle';
+                return { id: session.id, workspacePath: session.workspacePath, status };
+            },
+        });
+    } catch (error) {
+        logger.main.error('QC build gateway disabled: invalid owner configuration or state', error);
+    }
     markEnd('ai-service-init');
 
     // Recovery sweep: any queued_prompts row that was 'executing' when the

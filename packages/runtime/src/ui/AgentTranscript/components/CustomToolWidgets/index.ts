@@ -102,6 +102,7 @@ const WINDOWS_SHELL_NAME_REGEX = /^(?:"?[A-Za-z]:\\[^"]*\\)?(?:powershell|pwsh|c
 
 // Import custom widgets
 import { EditorScreenshotWidget } from './EditorScreenshotWidget';
+import { TurnReviewWidget } from './TurnReviewWidget';
 import { AskUserQuestionWidget } from './AskUserQuestionWidget';
 import { RequestUserInputWidget } from './RequestUserInputWidget';
 import { FeedbackRequestComposeWidget } from './feedback/FeedbackRequestComposeWidget';
@@ -142,6 +143,7 @@ import {
 // server (or historical legacy prefix) it was recorded under — no per-prefix
 // duplicates needed.
 const BUILT_IN_TOOL_WIDGETS: CustomToolWidgetRegistry = {
+  'TurnReview': TurnReviewWidget,
   // Editor screenshot capture tool (works for mockups and all other editor types)
   'capture_editor_screenshot': EditorScreenshotWidget,
 

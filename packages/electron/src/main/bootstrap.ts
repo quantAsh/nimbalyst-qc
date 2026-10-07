@@ -23,6 +23,7 @@
  */
 
 import { app } from 'electron';
+import { QC_PRODUCT_NAME } from './qcIdentity';
 import * as path from 'path';
 import Store from 'electron-store';
 import { createUncaughtExceptionHandler } from './uncaughtException';
@@ -65,7 +66,9 @@ function getCustomUserDataDir(): string | undefined {
   return undefined;
 }
 
+app.setName(QC_PRODUCT_NAME);
 const customUserDataDir = getCustomUserDataDir();
+if (!customUserDataDir) app.setPath('userData', path.join(app.getPath('appData'), QC_PRODUCT_NAME));
 
 if (customUserDataDir) {
   // Set userData path before any electron-store instances are created.
@@ -101,8 +104,7 @@ if (process.env.NODE_ENV !== 'production') {
   // console.log(`[Bootstrap] CDP remote debugging enabled on port ${cdpPort}`);
 }
 
-// Static import - no chunk boundary, no module duplication issues.
-// This works because:
-// 1. electron-store is lazy-initialized (store.ts)
-// 2. node-pty uses explicit path resolution (TerminalSessionManager.ts)
-import './index.js';
+// The desktop graph may initialize cached settings while modules load.
+// Import only after selecting userData and configuring the process. This is
+// the entry-point exception documented in MAIN_PROCESS_INIT.md.
+void import('./index.js');

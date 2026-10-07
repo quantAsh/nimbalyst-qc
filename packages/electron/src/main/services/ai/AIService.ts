@@ -7,6 +7,9 @@ import { execFile } from 'child_process';
 import { promisify } from 'util';
 import { safeHandle } from '../../utils/ipcRegistry';
 import Store from 'electron-store';
+import { AISessionsRepository } from '@nimbalyst/runtime/storage/repositories/AISessionsRepository';
+import type { BuildBinding, DraftRequest } from '../QcBuildGateway';
+import { getQueuedPromptsStore } from '../RepositoryManager';
 import {
   isExtensionAgentProvider,
   resolveExtensionAgentRef,
@@ -130,6 +133,7 @@ import {
 } from './askUserQuestionFallbackResolution';
 import { HooklessAgentFileWatcher } from './HooklessAgentFileWatcher';
 import { getAgentWorkflowService } from '../AgentWorkflowService';
+import { assertSteeringWorkspace, createSteeringControl } from './steeringControl';
 import { tryClaimAndDispatchNextQueuedPrompt } from './queuedPromptDispatcher';
 import {
   QueueDriveService,
@@ -284,6 +288,123 @@ export class AIService {
     if (cleaned > 0) {
       console.log(`[AIService] Cleaned ${cleaned} empty messages from existing sessions on startup`);
     }
+  }
+
+  /** Creates an owner-reviewed draft. Does not queue, submit, or start an agent. */
+  public async createGatewayDraft(binding: BuildBinding, request: DraftRequest): Promise<string> {
+    const provider = this.getSettingsStore().get('defaultProvider', 'claude-code') as AIProviderType;
+    if (!this.isProviderEnabledForWorkspace(provider, binding.workspacePath)) {
+      throw new Error('Selected desktop provider is not enabled for this workspace');
+    }
+    const model = await ModelRegistry.getDefaultModel(provider);
+    const session = await this.sessionManager.createSession(provider, undefined, binding.workspacePath, undefined, model, 'session', 'planning');
+    await AISessionsRepository.updateMetadata(session.id, {
+      title: request.objective.slice(0, 120),
+      draftInput: request.objective,
+      metadata: { qcBuildGateway: { organizationId: binding.organizationId, workspaceId: binding.workspaceId, contextRefs: request.contextRefs, sandboxPolicy: request.sandboxPolicy, executionMode: 'owner-review' } },
+    });
+    return session.id;
+  }
+
+  public async cancelGatewaySession(sessionId: string): Promise<void> {
+    const session = await AISessionsRepository.get(sessionId);
+    if (!session?.metadata?.qcBuildGateway) throw new Error('Not a gateway-owned session');
+    const state = getSessionStateManager().getSessionState(sessionId);
+    if (state?.status === 'running' || state?.status === 'waiting_for_input') {
+      const result = await this.cancelSessionRequest(sessionId);
+      if (!result.success) throw new Error(result.error || 'Desktop cancellation failed');
+    }
+    this.sessionsProcessingQueue.delete(sessionId);
+    // Prevent a cancelled draft/queued prompt from being submitted on reopening.
+    const queueStore = getQueuedPromptsStore();
+    for (const prompt of await queueStore.listPending(sessionId)) await queueStore.delete(prompt.id);
+    await AISessionsRepository.updateMetadata(sessionId, { draftInput: '', isArchived: true });
+    await this.forceSessionIdleOnCancel(sessionId);
+  }
+
+  private async cancelSessionRequest(sessionId: string, chunksReceived?: number): Promise<{ success: boolean; error?: string }> {
+
+      // console.log(`[AIService] ai:cancelRequest received for sessionId: ${sessionId}`);
+      // Abort the provider for the specific session
+      if (!sessionId) {
+        throw new Error('Session ID is required to cancel request');
+      }
+
+      // Use repository directly - we just need session metadata (provider type),
+      // not the full session load with messages
+      const { AISessionsRepository } = await import('@nimbalyst/runtime/storage/repositories/AISessionsRepository');
+      const session = await AISessionsRepository.get(sessionId);
+      if (!session) {
+        console.warn(`[AIService] Cancel failed - session not found: ${sessionId}`);
+        return { success: false, error: 'Session not found' };
+      }
+
+      if (session.provider === 'claude-code-cli') {
+        const terminalManager = getTerminalSessionManager();
+        if (!terminalManager.isTerminalActive(sessionId)) {
+          console.warn(`[AIService] Cancel failed - no active claude-code-cli terminal for session: ${sessionId}`);
+          return { success: false, error: 'No active terminal for session' };
+        }
+
+        terminalManager.writeToTerminal(sessionId, '\x03');
+        this.analytics.sendEvent('ai_stream_interrupted', {
+          provider: 'claude-code-cli',
+          chunksReceived: chunksReceived || 0,
+          reason: 'user_cancel'
+        });
+        this.analytics.sendEvent('cancel_ai_request', { provider: 'claude-code-cli' });
+        return { success: true };
+      }
+
+      // console.log(`[AIService] Session found, provider type: ${session.provider}`);
+      const provider = ProviderFactory.getProvider(session.provider as AIProviderType, sessionId);
+      // console.log(`[AIService] Provider lookup result: ${provider ? 'found' : 'NOT FOUND'}`);
+      if (provider) {
+        // Get provider type
+        const providerType = (provider as any).providerType || 'unknown';
+
+        // Track stream interruption
+        this.analytics.sendEvent('ai_stream_interrupted', {
+          provider: providerType,
+          chunksReceived: chunksReceived || 0,
+          reason: 'user_cancel'
+        });
+
+        // Defensive cleanup: if the in-flight turn was processing a queued
+        // prompt, drop the in-memory guard and unwedge any DB row stuck in
+        // 'executing'. sweepExecutingForSession is delivery-aware -- a
+        // prompt whose user message already landed in ai_agent_messages is
+        // marked completed instead of rolled back, so the queue trigger
+        // that follows the abort doesn't immediately re-claim and re-send
+        // the same input (NIM-615).
+        this.sessionsProcessingQueue.delete(sessionId);
+        try {
+          const { getQueuedPromptsStore } = await import('../RepositoryManager');
+          const queueStore = getQueuedPromptsStore();
+          const { completed, failed, rolledBack } = await queueStore.sweepExecutingForSession(sessionId);
+          if (completed > 0 || failed > 0 || rolledBack > 0) {
+            logger.main.info(
+              `[AIService] cancelRequest: swept session ${sessionId} -- ${completed} answered marked completed, ${failed} delivered-but-unanswered marked failed, ${rolledBack} undelivered rolled back`
+            );
+            await this.publishQueueStateToSync(sessionId);
+          }
+        } catch (sweepErr) {
+          logger.main.error('[AIService] cancelRequest: sweepExecutingForSession failed:', sweepErr);
+        }
+
+        provider.abort();
+        // console.log(`[AIService] Cancelled request for session ${sessionId}`);
+        this.analytics.sendEvent('cancel_ai_request', {provider: providerType})
+        await this.forceSessionIdleOnCancel(sessionId);
+        return { success: true };
+      }
+      // No live provider: the turn is already gone (e.g. it died on an in-band
+      // error chunk without settling). Cancel must still be authoritative --
+      // otherwise the stale 'running' state in SessionStateManager survives and
+      // the renderer's processing reconcile re-asserts the spinner seconds later.
+      console.warn(`[AIService] Cancel: no active provider for session ${sessionId} - clearing stale running state`);
+      await this.forceSessionIdleOnCancel(sessionId);
+      return { success: true };
   }
 
   public async queuePromptForSession(
@@ -2135,6 +2256,29 @@ export class AIService {
     this.sendMessageHandler = this.streamingHandler.handle;
     safeHandle('ai:sendMessage', this.sendMessageHandler);
 
+    const steering = createSteeringControl({
+      getSession: id => AISessionsRepository.get(id),
+      getProvider: (type, id) => ProviderFactory.getProvider(type as AIProviderType, id) ?? null,
+    });
+    const validateSteeringSender = (event: Electron.IpcMainInvokeEvent, workspacePath: string) => {
+      const window = BrowserWindow.fromWebContents(event.sender);
+      const windowId = window ? getWindowId(window) : null;
+      assertSteeringWorkspace(windowId ? windowStates.get(windowId)?.workspacePath : undefined, workspacePath);
+    };
+    safeHandle('ai:getSteeringTarget', async (event, sessionId: string, workspacePath: string) => {
+      validateSteeringSender(event, workspacePath);
+      return steering.target(sessionId, workspacePath);
+    });
+    safeHandle('ai:steerTurn', async (event, sessionId: string, workspacePath: string, expectedTurnId: string, text: string) => {
+      validateSteeringSender(event, workspacePath);
+      try {
+        const result = await steering.send(sessionId, workspacePath, expectedTurnId, text);
+        return { success: true, ...result };
+      } catch (error) {
+        return { success: false, error: error instanceof Error ? error.message : 'Steering failed. Your draft was kept.' };
+      }
+    });
+
     // Get session history (full session data with messages - slow)
     safeHandle('ai:getSessions', async (event, workspacePath?: string) => {
       return await this.sessionManager.getSessions(workspacePath);
@@ -2993,89 +3137,7 @@ export class AIService {
     });
 
     // Cancel current request
-    safeHandle('ai:cancelRequest', async (event, sessionId: string, chunksReceived?: number) => {
-      // console.log(`[AIService] ai:cancelRequest received for sessionId: ${sessionId}`);
-      // Abort the provider for the specific session
-      if (!sessionId) {
-        throw new Error('Session ID is required to cancel request');
-      }
-
-      // Use repository directly - we just need session metadata (provider type),
-      // not the full session load with messages
-      const { AISessionsRepository } = await import('@nimbalyst/runtime/storage/repositories/AISessionsRepository');
-      const session = await AISessionsRepository.get(sessionId);
-      if (!session) {
-        console.warn(`[AIService] Cancel failed - session not found: ${sessionId}`);
-        return { success: false, error: 'Session not found' };
-      }
-
-      if (session.provider === 'claude-code-cli') {
-        const terminalManager = getTerminalSessionManager();
-        if (!terminalManager.isTerminalActive(sessionId)) {
-          console.warn(`[AIService] Cancel failed - no active claude-code-cli terminal for session: ${sessionId}`);
-          return { success: false, error: 'No active terminal for session' };
-        }
-
-        terminalManager.writeToTerminal(sessionId, '\x03');
-        this.analytics.sendEvent('ai_stream_interrupted', {
-          provider: 'claude-code-cli',
-          chunksReceived: chunksReceived || 0,
-          reason: 'user_cancel'
-        });
-        this.analytics.sendEvent('cancel_ai_request', { provider: 'claude-code-cli' });
-        return { success: true };
-      }
-
-      // console.log(`[AIService] Session found, provider type: ${session.provider}`);
-      const provider = ProviderFactory.getProvider(session.provider as AIProviderType, sessionId);
-      // console.log(`[AIService] Provider lookup result: ${provider ? 'found' : 'NOT FOUND'}`);
-      if (provider) {
-        // Get provider type
-        const providerType = (provider as any).providerType || 'unknown';
-
-        // Track stream interruption
-        this.analytics.sendEvent('ai_stream_interrupted', {
-          provider: providerType,
-          chunksReceived: chunksReceived || 0,
-          reason: 'user_cancel'
-        });
-
-        // Defensive cleanup: if the in-flight turn was processing a queued
-        // prompt, drop the in-memory guard and unwedge any DB row stuck in
-        // 'executing'. sweepExecutingForSession is delivery-aware -- a
-        // prompt whose user message already landed in ai_agent_messages is
-        // marked completed instead of rolled back, so the queue trigger
-        // that follows the abort doesn't immediately re-claim and re-send
-        // the same input (NIM-615).
-        this.sessionsProcessingQueue.delete(sessionId);
-        try {
-          const { getQueuedPromptsStore } = await import('../RepositoryManager');
-          const queueStore = getQueuedPromptsStore();
-          const { completed, failed, rolledBack } = await queueStore.sweepExecutingForSession(sessionId);
-          if (completed > 0 || failed > 0 || rolledBack > 0) {
-            logger.main.info(
-              `[AIService] cancelRequest: swept session ${sessionId} -- ${completed} answered marked completed, ${failed} delivered-but-unanswered marked failed, ${rolledBack} undelivered rolled back`
-            );
-            await this.publishQueueStateToSync(sessionId);
-          }
-        } catch (sweepErr) {
-          logger.main.error('[AIService] cancelRequest: sweepExecutingForSession failed:', sweepErr);
-        }
-
-        provider.abort();
-        // console.log(`[AIService] Cancelled request for session ${sessionId}`);
-        this.analytics.sendEvent('cancel_ai_request', {provider: providerType})
-        await this.forceSessionIdleOnCancel(sessionId);
-        return { success: true };
-      }
-      // No live provider: the turn is already gone (e.g. it died on an in-band
-      // error chunk without settling). Cancel must still be authoritative --
-      // otherwise the stale 'running' state in SessionStateManager survives and
-      // the renderer's processing reconcile re-asserts the spinner seconds later.
-      console.warn(`[AIService] Cancel: no active provider for session ${sessionId} - clearing stale running state`);
-      await this.forceSessionIdleOnCancel(sessionId);
-      return { success: true };
-    });
+    safeHandle('ai:cancelRequest', async (_event, sessionId: string, chunksReceived?: number) => this.cancelSessionRequest(sessionId, chunksReceived));
 
     // Interrupt the current turn (graceful when possible) so queued prompts
     // are processed sooner. Providers that support a true mid-stream interrupt

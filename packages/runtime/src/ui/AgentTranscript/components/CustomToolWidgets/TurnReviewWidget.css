@@ -1,0 +1,40 @@
+.turn-review-widget {
+  border: 1px solid var(--nim-border);
+  border-radius: 6px;
+  color: var(--nim-text);
+  background: var(--nim-bg-secondary);
+  container-type: inline-size;
+}
+.turn-review-toggle {
+  padding: 8px 12px;
+  width: 100%;
+  text-align: left;
+  color: inherit;
+  background: transparent;
+  cursor: pointer;
+}
+.turn-review-toggle:hover {
+  background: var(--nim-bg-hover);
+}
+.turn-review-content {
+  padding: 0 12px 12px;
+}
+.turn-review-content p {
+  color: var(--nim-text-muted);
+  margin: 6px 0;
+}
+.turn-review-content ol {
+  padding-left: 20px;
+}
+.turn-review-diff pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  max-height: 400px;
+  overflow: auto;
+  user-select: text;
+}
+@container (max-width: 400px) {
+  .turn-review-content {
+    padding: 0 8px 8px;
+  }
+}

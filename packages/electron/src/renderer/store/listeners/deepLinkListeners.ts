@@ -25,6 +25,8 @@ import { activeWorkspacePathAtom } from '../atoms/openProjects';
 import { orgProjectWalkRefreshAtom } from '../atoms/orgProjectWalk';
 import { openSettingsCommandAtom } from '../atoms/settingsNavigation';
 import { errorNotificationService } from '../../services/ErrorNotificationService';
+import { loadSessionDataAtom } from '../atoms/sessions';
+import { dispatchOpenSessionInTab } from '../actions/sessionHistoryActions';
 import { trackTeamAnalyticsEvent } from '../../utils/teamAnalytics';
 import type { TrackerDeepLinkView } from '../../../shared/trackerDeepLinks';
 import { requestInboxRowSelection } from '../../components/TeamMode/orgWindowCommandBus';
@@ -263,6 +265,20 @@ async function drainPendingTeamInvite(): Promise<void> {
 
 async function drainPendingFor(workspacePath: string | null): Promise<void> {
   if (!workspacePath) return;
+  try {
+    const build = await window.electronAPI.invoke('deep-link:consume-pending-build', workspacePath) as { workspacePath: string; sessionId?: string } | null;
+    if (build) {
+      ensureActiveWorkspace(build.workspacePath);
+      if (build.sessionId) {
+        const session = await store.set(loadSessionDataAtom, { sessionId: build.sessionId, workspacePath: build.workspacePath });
+        if (!session) throw new Error('Build session is unavailable in this workspace');
+        store.set(setWindowModeAtom, 'agent');
+        await dispatchOpenSessionInTab(build.sessionId);
+      }
+    }
+  } catch (error) {
+    console.error('[DeepLink] Failed to consume pending build link:', error);
+  }
   const feedbackGeneration = orgFeedbackApplyGeneration;
   try {
     const [docPending, folderPending, trackerPending, feedbackPending] = await Promise.all([
@@ -329,7 +345,21 @@ export function initDeepLinkListeners(): () => void {
     })
   );
 
-  // Live: tracker link routed to this window.
+  // Consume once: the live nudge can race the mount-time pending drain.
+  cleanups.push(window.electronAPI.on('deep-link:open-build', (data: { workspacePath: string; sessionId?: string }) => {
+    if (!data?.workspacePath) return;
+    ensureActiveWorkspace(data.workspacePath);
+    void window.electronAPI.invoke('deep-link:consume-pending-build', data.workspacePath).then(async (pending: { workspacePath: string; sessionId?: string } | null) => {
+      if (!pending || pending.workspacePath !== data.workspacePath) return;
+      ensureActiveWorkspace(pending.workspacePath);
+      if (pending.sessionId) {
+        const session = await store.set(loadSessionDataAtom, { sessionId: pending.sessionId, workspacePath: pending.workspacePath });
+        if (!session) throw new Error('Build session is unavailable in this workspace');
+        store.set(setWindowModeAtom, 'agent');
+        await dispatchOpenSessionInTab(pending.sessionId);
+      }
+    }).catch(console.error);
+  }));
   cleanups.push(
     window.electronAPI.on('deep-link:open-tracker', (data: TrackerPayload) => {
       applyTrackerPayload(data);

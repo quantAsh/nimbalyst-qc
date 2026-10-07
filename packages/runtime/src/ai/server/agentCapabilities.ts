@@ -54,6 +54,9 @@ export interface AgentCapabilities {
   skills: boolean;
 
   compaction: CompactionSupport;
+
+  /** Append text to an existing active turn without interrupting it. */
+  steering: boolean;
 }
 
 /**
@@ -64,6 +67,7 @@ export const NO_AGENT_CAPABILITIES: AgentCapabilities = Object.freeze({
   slashCommands: false,
   skills: false,
   compaction: 'unsupported',
+  steering: false,
 });
 
 /**
@@ -81,24 +85,24 @@ export const BUILTIN_AGENT_CAPABILITIES: Readonly<Record<AIProviderType, AgentCa
 
   // The Claude Agent SDK reports its own commands and skills in the init
   // payload and interprets `/compact` as a real command.
-  'claude-code': { slashCommands: true, skills: true, compaction: 'slash-command' },
+  'claude-code': { slashCommands: true, skills: true, compaction: 'slash-command', steering: false },
 
   // The genuine CLI is driven by its PTY, not by this provider class:
   // `sendMessage` throws, so there is nothing here to enumerate or compact.
   // Its own TUI still handles `/`-commands the user types into the terminal.
-  'claude-code-cli': { slashCommands: false, skills: false, compaction: 'unsupported' },
+  'claude-code-cli': { slashCommands: false, skills: false, compaction: 'unsupported', steering: false },
 
   // Codex: skills are real (skills/list over the app-server), slash commands
   // are not — the app-server interprets none, so the catalog is deliberately
   // empty rather than advertising TUI names that no-op (#1252). Compaction is
   // `thread/compact/start`.
-  'openai-codex': { slashCommands: false, skills: true, compaction: 'rpc' },
+  'openai-codex': { slashCommands: false, skills: true, compaction: 'rpc', steering: true },
 
   // ACP and the remaining CLI agents expose none of the three over their
   // protocols today. Declared unsupported rather than left ambiguous.
-  'openai-codex-acp': { slashCommands: false, skills: false, compaction: 'unsupported' },
-  opencode: { slashCommands: false, skills: false, compaction: 'unsupported' },
-  'copilot-cli': { slashCommands: false, skills: false, compaction: 'unsupported' },
+  'openai-codex-acp': { slashCommands: false, skills: false, compaction: 'unsupported', steering: false },
+  opencode: { slashCommands: false, skills: false, compaction: 'unsupported', steering: false },
+  'copilot-cli': { slashCommands: false, skills: false, compaction: 'unsupported', steering: false },
 });
 
 /**

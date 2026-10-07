@@ -313,6 +313,22 @@ export class CodexAppServerProtocol implements AgentProtocol {
     return this.createSession(options);
   }
 
+  getActiveTurnId(session: ProtocolSession): string | null {
+    return this.assertRaw(session).activeTurnId;
+  }
+
+  async steerTurn(session: ProtocolSession, expectedTurnId: string, text: string): Promise<{ turnId: string }> {
+    if (!expectedTurnId || typeof text !== 'string' || !text.trim() || text.length > 32768) throw new Error('Invalid steering input.');
+    const raw = this.assertRaw(session);
+    if (raw.activeTurnId !== expectedTurnId) throw new Error('The active turn changed or has ended. Your draft was kept.');
+    // Never await input preparation here: the captured turn must be the one sent.
+    const result = await raw.client.request<{ turnId: string }>('turn/steer', {
+      threadId: raw.threadId, expectedTurnId, input: [{ type: 'text', text }],
+    });
+    if (result?.turnId !== expectedTurnId) throw new Error('The agent returned an unexpected steering acknowledgement.');
+    return result;
+  }
+
   async *sendMessage(session: ProtocolSession, message: ProtocolMessage): AsyncIterable<ProtocolEvent> {
     const raw = this.assertRaw(session);
     // Prefer the per-message signal: `raw.options.abortSignal` is the signal
@@ -357,10 +373,11 @@ export class CodexAppServerProtocol implements AgentProtocol {
         pendingTurnNotifications.push({ method, params });
         return;
       }
-      if (routing.turnId && raw.activeTurnId && routing.turnId !== raw.activeTurnId) {
+      if (routing.turnId && (raw.activeTurnId || turnStartResultId) && routing.turnId !== (raw.activeTurnId || turnStartResultId)) {
         return;
       }
 
+      if (method === 'turn/completed') raw.activeTurnId = null;
       try {
         this.dispatchNotification(
           method,
@@ -405,6 +422,7 @@ export class CodexAppServerProtocol implements AgentProtocol {
       if (!raw.activeTurnId) return;
       interruptRequested = true;
       const params: TurnInterruptParams = { threadId: raw.threadId, turnId: raw.activeTurnId };
+      raw.activeTurnId = null;
       Promise.resolve(raw.client.request('turn/interrupt', params))
         .catch((err) => console.warn('[CODEX][APPSERVER] turn/interrupt failed:', err));
     };
