@@ -1,0 +1,40 @@
+name: Validate QC Nimbalyst fork
+
+on:
+  workflow_dispatch:
+  push:
+    branches: ['feat/venture-os-build-gateway', 'qc/**']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: qc-validation-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      WORKSPACE_JOBS: '2'
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: '**/package-lock.json'
+      - name: Install locked dependencies and committed patches
+        run: npm ci
+      - name: Build declarations and typecheck all workspaces
+        run: npm run typecheck:prepush
+      - name: Validate standalone tenant controller
+        run: node --test packages/runtime/src/ai/server/tenant/QcTenantWorker.test.mjs
+      - name: Run full fork regression gate
+        run: npm run test:prepush -- --maxWorkers=2
+      - name: Record scope
+        run: |
+          echo 'No model calls, desktop launch, release publication or deployment is configured in this workflow.' >> "$GITHUB_STEP_SUMMARY"
