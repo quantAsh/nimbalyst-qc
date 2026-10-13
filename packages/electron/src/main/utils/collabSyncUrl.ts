@@ -15,11 +15,13 @@
  */
 
 import { getSessionSyncConfig } from './store';
+import {requireQcCloudCollaboration} from '../../shared/qcNetworkPolicy';
 
 const PRODUCTION_WS_URL = 'wss://sync.nimbalyst.com';
 const DEVELOPMENT_WS_URL = 'ws://localhost:8790';
 
 export function getCollabSyncWsUrl(): string {
+  requireQcCloudCollaboration();
   const config = getSessionSyncConfig();
   const isDev = process.env.NODE_ENV !== 'production';
   const env = isDev ? config?.environment : undefined;

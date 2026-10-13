@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Steer active Codex turns without interrupting, while preserving queued messages for other providers.
 
-- QC fork: separate desktop identity/profile/URL scheme, disabled upstream updates, and replayable Codex turn plan/diff review cards.
+- QC fork: separate desktop identity/profile/URL scheme, disabled upstream updates, telemetry and cloud collaboration, replayable Codex review cards, and automatic local checkout evidence notifications.
 
 ### Added
 <!-- New features go here -->

@@ -13,6 +13,7 @@ const isCaptureMode = new URLSearchParams(window.location.search).get('mode') ==
 import './devtools/installRenderProfiler';
 
 import React from 'react';
+import {QC_UPSTREAM_TELEMETRY_ENABLED} from '../shared/qcNetworkPolicy';
 import ReactDOM from 'react-dom/client';
 import { Provider as JotaiProvider } from 'jotai';
 import App from './App';
@@ -232,7 +233,7 @@ if (isDevMode && !(window as any).PLAYWRIGHT) {
   document.body.style.setProperty('--dev-mode-label', `'${devLabel}'`);
 }
 
-const posthogClient = posthog.init(
+const posthogClient = QC_UPSTREAM_TELEMETRY_ENABLED ? posthog.init(
   'phc_s3lQIILexwlGHvxrMBqti355xUgkRocjMXW4LjV0ATw',
   {
     bootstrap: {
@@ -265,22 +266,23 @@ const posthogClient = posthog.init(
     },
     debug: isDevInstallation
   }
-)
+) : undefined;
 
 // Resolve the user's setting before anything can capture, then keep posthog-js
 // itself in sync so it also stops its own background requests -- not just the
 // events we hand it.
 setAnalyticsConsent(analyticsAllowed);
-if (analyticsAllowed) {
+if (QC_UPSTREAM_TELEMETRY_ENABLED && analyticsAllowed) {
   // `captureEventName: false` matters: opt_in_capturing() captures an `$opt_in`
   // event by default, and this runs on every launch in every window. Applying
   // an already-granted setting is not a user action and must not emit.
   posthog.opt_in_capturing({ captureEventName: false });
-} else {
+} else if (QC_UPSTREAM_TELEMETRY_ENABLED) {
   posthog.opt_out_capturing();
 }
 
 onAnalyticsConsentChange((enabled) => {
+  if (!QC_UPSTREAM_TELEMETRY_ENABLED) return;
   // This path is an explicit toggle, so the default `$opt_in` event is wanted
   // here -- it mirrors the `analytics_opt_out` the main service records, and
   // fires once per user action rather than once per launch.
@@ -292,7 +294,7 @@ onAnalyticsConsentChange((enabled) => {
 initAnalyticsListeners();
 
 // syncs the session ID from posthog-js to the electron-side analytics service
-posthog.onSessionId(async (sessionId: string, windowId, changeReason) => {
+if (QC_UPSTREAM_TELEMETRY_ENABLED) posthog.onSessionId(async (sessionId: string, windowId, changeReason) => {
   window.electronAPI.analytics?.setSessionId(sessionId);
 })
 
@@ -303,9 +305,7 @@ root.render(
   <React.StrictMode>
     <ErrorBoundary>
       <JotaiProvider store={store}>
-        <PostHogProvider client={posthogClient}>
-          <App />
-        </PostHogProvider>
+        {posthogClient ? <PostHogProvider client={posthogClient}><App /></PostHogProvider> : <App />}
       </JotaiProvider>
     </ErrorBoundary>
   </React.StrictMode>

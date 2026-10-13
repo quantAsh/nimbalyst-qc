@@ -1,4 +1,5 @@
 import Store from 'electron-store';
+import {QC_UPSTREAM_TELEMETRY_ENABLED,QC_CLOUD_COLLABORATION_ENABLED,requireQcCloudCollaboration} from '../../shared/qcNetworkPolicy';
 import { execSync } from 'child_process';
 import { existsSync } from 'fs';
 import * as path from 'path';
@@ -661,7 +662,7 @@ function getAppStore(): Store<AppStoreSchema> {
             documents: [],
           },
           openWorkspaces: [],
-          analyticsEnabled: true, // Default to enabled
+          analyticsEnabled: false,
         },
       });
       console.log('[Store] App store initialized at:', _appStore.path);
@@ -1755,18 +1756,18 @@ export function setDefaultThinkingMode(mode: ThinkingMode): void {
 
 // Analytics Settings
 export function isAnalyticsEnabled(): boolean {
+  if (!QC_UPSTREAM_TELEMETRY_ENABLED) return false;
   try {
-    const enabled = getAppStore().get('analyticsEnabled', true); // Default to enabled
+    const enabled = getAppStore().get('analyticsEnabled', false);
     return enabled;
   } catch (error) {
     console.error('[Store] Failed to read analyticsEnabled from store:', error);
-    // Fail open - default to enabled if we can't read the store
-    // This ensures analytics works even if store is temporarily unavailable
-    return true;
+    return false;
   }
 }
 
 export function setAnalyticsEnabled(enabled: boolean): void {
+  if (enabled && !QC_UPSTREAM_TELEMETRY_ENABLED) throw new Error('Upstream telemetry is disabled in QC Nimbalyst');
   getAppStore().set('analyticsEnabled', enabled);
 }
 
@@ -1825,10 +1826,13 @@ export interface StytchAuthConfig {
 }
 
 export function getSessionSyncConfig(): SessionSyncConfig | undefined {
-  return getAppStore().get('sessionSync');
+  const config=getAppStore().get('sessionSync');
+  if (!QC_CLOUD_COLLABORATION_ENABLED && config) return {enabled:false,serverUrl:'',enabledProjects:[],docSyncEnabledProjects:[],preventSleepMode:'off'};
+  return config;
 }
 
 export function setSessionSyncConfig(config: SessionSyncConfig | undefined): void {
+  if (config?.enabled) requireQcCloudCollaboration();
   if (config) {
     getAppStore().set('sessionSync', config);
   } else {

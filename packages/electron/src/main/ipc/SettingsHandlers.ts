@@ -1,4 +1,5 @@
 import { BrowserWindow, safeStorage, session, dialog } from 'electron';
+import {QC_CLOUD_COLLABORATION_ENABLED} from '../../shared/qcNetworkPolicy';
 import { applyAnalyticsEnabled } from '../services/analytics/applyAnalyticsEnabled';
 import { safeHandle, safeOn } from '../utils/ipcRegistry';
 import * as os from 'os';
@@ -935,6 +936,7 @@ export function registerSettingsHandlers() {
     // Session sync settings
     safeHandle('sync:get-config', () => {
         const config = getSessionSyncConfig();
+        if(!QC_CLOUD_COLLABORATION_ENABLED)return config;
         if (!config) return config;
         const migrated = migratePersonalSyncProfiles(config);
         if (migrated !== config) setSessionSyncConfig(migrated);

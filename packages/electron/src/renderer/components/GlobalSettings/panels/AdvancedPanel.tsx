@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import {QC_UPSTREAM_TELEMETRY_ENABLED} from '../../../../shared/qcNetworkPolicy';
 import { useAtom, useAtomValue, useSetAtom } from 'jotai';
 import { usePostHog } from 'posthog-js/react';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
@@ -402,10 +403,11 @@ export function AdvancedPanel() {
         <RestorePreviousProjectsToggle />
 
         <SettingsToggle
-          checked={analyticsEnabled}
+          checked={QC_UPSTREAM_TELEMETRY_ENABLED && analyticsEnabled}
+          disabled={!QC_UPSTREAM_TELEMETRY_ENABLED}
           onChange={(checked) => updateSettings({ analyticsEnabled: checked })}
           name="Send Anonymous Usage Data"
-          description="Help improve Nimbalyst by sending anonymous usage data. No prompts or personal info collected."
+          description="Upstream telemetry is disabled in QC Nimbalyst."
         />
 
         <SettingsToggle

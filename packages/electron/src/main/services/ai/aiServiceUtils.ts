@@ -524,3 +524,10 @@ export function categorizeAIError(error: any): string {
   if (message.includes('overloaded') || message.includes('capacity')) return 'overloaded';
   return 'unknown';
 }
+
+/** Resolve the explicitly stored local endpoint on every provider initialization. */
+export function resolveLmStudioBaseUrl(settings: { get(key: string, fallback: unknown): unknown }): string {
+  const provider = settings.get('providerSettings.lmstudio', {}) as { baseUrl?: string };
+  const keys = settings.get('apiKeys', {}) as Record<string, string>;
+  return provider.baseUrl || keys.lmstudio_url || 'http://127.0.0.1:8234';
+}

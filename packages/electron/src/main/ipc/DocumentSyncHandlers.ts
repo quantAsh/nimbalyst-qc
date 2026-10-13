@@ -1,3 +1,4 @@
+import {requireQcCloudCollaboration} from '../../shared/qcNetworkPolicy';
 /**
  * DocumentSyncHandlers
  *
@@ -867,6 +868,7 @@ export function registerDocumentSyncHandlers(): void {
    * Returns a unique wsId the renderer uses to send/receive on this socket.
    */
   safeHandle('document-sync:ws-connect', async (event, payload: { url: string }) => {
+    requireQcCloudCollaboration();
     const wsId = `ws-proxy-${++wsIdCounter}`;
     const webContents = event.sender;
 

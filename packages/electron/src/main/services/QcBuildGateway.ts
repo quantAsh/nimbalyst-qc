@@ -148,4 +148,11 @@ export class QcBuildGateway {
       return { workspacePath: record.workspacePath, ...(parsed.hostname === 'session' ? { sessionId: id } : {}) };
     } catch { return null; }
   }
+
+  async evidenceBinding(id:string){
+    const record=this.state.sessions[id];
+    if(!record)return null;
+    const native=await this.native(record);
+    return {id:record.id,organizationId:record.organizationId,workspaceId:record.workspaceId,status:record.cancelled?'cancelled':native.status};
+  }
 }

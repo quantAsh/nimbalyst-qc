@@ -112,6 +112,7 @@ import {
   detectNimbalystSlashCommand,
   readFileContentOrNull,
   getFileExtensionForAnalytics,
+  resolveLmStudioBaseUrl,
 } from './aiServiceUtils';
 import { disableParentNotificationsAfterDirectTakeover } from './childSessionTakeover';
 import { installScopedProviderListener } from './providerListenerRegistry';
@@ -1288,6 +1289,9 @@ export class MessageStreamingHandler {
           if (modelForProvider !== null) {
             turnConfig.model = modelForProvider;
           }
+        }
+        if (session.provider === 'lmstudio') {
+          turnConfig.baseUrl = resolveLmStudioBaseUrl(this.svc.getSettingsStore());
         }
         await provider.initialize(turnConfig);
       }

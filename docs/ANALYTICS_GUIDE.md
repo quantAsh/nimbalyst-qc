@@ -1,5 +1,12 @@
 # Analytics Guide for Nimbalyst
 
+> **QC distribution override:** Upstream telemetry is disabled. Main and renderer
+> PostHog/retention clients are not initialized, legacy opt-in settings are ignored,
+> and telemetry opt-in is unavailable. The upstream event catalog below documents
+> upstream behavior; it does not describe active QC data collection. Cloud sync/share
+> is disabled pending an approved QC service and storage-isolation acceptance.
+
+
 This document explains how to use the analytics tracking service in the Electron application. The service is built on PostHog and designed to collect anonymous usage data while respecting user privacy.
 
 ## Architecture Overview

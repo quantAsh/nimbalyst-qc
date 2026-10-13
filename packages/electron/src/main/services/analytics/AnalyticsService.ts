@@ -5,6 +5,7 @@ import {logger} from "../../utils/logger";
 import {app} from "electron";
 import {isAnalyticsEnabled, setAnalyticsEnabled} from "../../utils/store";
 import {isGitAvailable} from "../../utils/gitUtils";
+import {QC_UPSTREAM_TELEMETRY_ENABLED} from '../../../shared/qcNetworkPolicy';
 
 const POSTHOG_PROJECT_PUBLIC_ID = 'phc_s3lQIILexwlGHvxrMBqti355xUgkRocjMXW4LjV0ATw';
 
@@ -49,6 +50,7 @@ export class AnalyticsService {
   private isOfficialBuild: boolean = process.env.OFFICIAL_BUILD === 'true';
 
   public init(): void {
+    if (!QC_UPSTREAM_TELEMETRY_ENABLED) return;
     this.postHogClient ??= this.initPostHogClient();
     this.sessionTracker ??= this.initPostHogClient();
     this.healthCheck();
@@ -120,6 +122,7 @@ export class AnalyticsService {
   }
 
   public async optIn(): Promise<void> {
+    if (!QC_UPSTREAM_TELEMETRY_ENABLED) throw new Error('Upstream telemetry is disabled in QC Nimbalyst');
     this.log.info('Processing analytics opt-in');
 
     this.postHogClient ??= this.initPostHogClient();
@@ -200,15 +203,15 @@ export class AnalyticsService {
   }
 
   public allowedToSendAnalytics(): boolean {
+    if (!QC_UPSTREAM_TELEMETRY_ENABLED) return false;
     // Check if user has enabled analytics in settings
     try {
       const enabled = isAnalyticsEnabled();
       return enabled;
     } catch (error) {
       this.log.error('[Analytics] Error checking analytics enabled state', { error });
-      // Fail open - if we can't read the setting, allow analytics
-      // This ensures analytics works even if store initialization fails
-      return true;
+      // Failed consent reads must not permit telemetry.
+      return false;
     }
   }
 

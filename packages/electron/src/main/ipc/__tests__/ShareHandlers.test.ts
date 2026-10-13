@@ -2,8 +2,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const { fetchMock, accountState } = vi.hoisted(() => ({
   fetchMock: vi.fn(),
-  accountState: { includeBound: false },
+  accountState: { includeBound: false, allowCollaboration:true },
 }));
+
+// Preserve coverage of configured sharing without enabling it in the QC build.
+vi.mock('../../../shared/qcNetworkPolicy',async importOriginal=>{
+  const policy=await importOriginal<typeof import('../../../shared/qcNetworkPolicy')>();
+  return {...policy,requireQcCloudCollaboration:()=>{if(!accountState.allowCollaboration)policy.requireQcCloudCollaboration();}};
+});
 
 vi.mock('electron', () => ({
   safeStorage: { isEncryptionAvailable: vi.fn(() => false) },
@@ -86,10 +92,17 @@ function shareListCallCount(): number {
 
 describe('ShareHandlers share:list dedup', () => {
   beforeEach(() => {
+    accountState.allowCollaboration=true;
     accountState.includeBound = false;
     invalidateShareListCache();
     fetchMock.mockReset();
     fetchMock.mockImplementation(async () => jsonResponse({ shares: [] }));
+  });
+
+  it('does not fetch upstream shares when the actual QC policy is active',async()=>{
+    accountState.allowCollaboration=false;
+    await getShareList();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   afterEach(() => {

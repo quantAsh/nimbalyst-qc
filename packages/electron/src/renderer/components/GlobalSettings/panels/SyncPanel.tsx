@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import {QC_CLOUD_COLLABORATION_ENABLED,QC_COLLABORATION_NOTICE} from '../../../../shared/qcNetworkPolicy';
 import { usePostHog } from 'posthog-js/react';
 import { useAtom, useAtomValue } from 'jotai';
 import { MaterialSymbol } from '@nimbalyst/runtime/ui/icons/MaterialSymbol';
@@ -71,6 +72,11 @@ interface DeviceInfo {
 export type PersonalSyncSection = 'accounts' | 'mobile' | 'devices';
 
 export function SyncPanel({ section }: { section: PersonalSyncSection }) {
+  if (!QC_CLOUD_COLLABORATION_ENABLED) return <div className="qc-collaboration-status p-4"><h3 className="text-base font-semibold">Cloud collaboration unavailable</h3><p className="mt-2 text-sm">{QC_COLLABORATION_NOTICE}</p></div>;
+  return <ConfiguredSyncPanel section={section}/>;
+}
+
+function ConfiguredSyncPanel({ section }: { section: PersonalSyncSection }) {
   const posthog = usePostHog();
   const { confirm } = useDialog();
   const isDevelopment = import.meta.env.DEV;

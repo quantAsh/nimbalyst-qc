@@ -75,6 +75,7 @@ import {
   previewForLog,
   LOG_PREVIEW_LENGTH,
   extensionPromptRequiresConfiguredApiKey,
+  resolveLmStudioBaseUrl,
 } from '../aiServiceUtils';
 
 describe('aiServiceUtils', () => {
@@ -438,5 +439,20 @@ describe('aiServiceUtils', () => {
     it('respects an explicit max', () => {
       expect(previewForLog('abcdefghij', 4)).toBe('abcd…');
     });
+  });
+});
+
+describe('local model endpoint refresh', () => {
+  it('uses current provider settings, then the explicit legacy setting, then the default', () => {
+    let provider = { baseUrl: 'http://127.0.0.1:54321' };
+    const keys: Record<string, string> = { lmstudio_url: 'http://localhost:1234' };
+    const settings = { get: (key: string) => key === 'apiKeys' ? keys : provider };
+    expect(resolveLmStudioBaseUrl(settings)).toBe('http://127.0.0.1:54321');
+    provider = { baseUrl: 'http://127.0.0.1:54322' };
+    expect(resolveLmStudioBaseUrl(settings)).toBe('http://127.0.0.1:54322');
+    provider = { baseUrl: '' };
+    expect(resolveLmStudioBaseUrl(settings)).toBe('http://localhost:1234');
+    delete keys.lmstudio_url;
+    expect(resolveLmStudioBaseUrl(settings)).toBe('http://127.0.0.1:8234');
   });
 });

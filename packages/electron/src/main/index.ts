@@ -2674,6 +2674,7 @@ app.whenReady().then(async () => {
     const buildAiService = aiService;
     try {
         configureQcBuildGateway({
+            subscribeNativeEvents:listener=>getSessionStateManager().subscribe(listener),
             createDraft: (binding, request) => buildAiService.createGatewayDraft(binding, request),
             cancelSession: id => buildAiService.cancelGatewaySession(id),
             openSession: id => handleDeepLink(`nimbalyst://session/${id}`),

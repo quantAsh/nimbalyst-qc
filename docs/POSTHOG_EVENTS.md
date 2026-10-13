@@ -1,5 +1,12 @@
 # PostHog Events Reference
 
+> **QC distribution override:** Upstream telemetry is disabled. Main and renderer
+> PostHog/retention clients are not initialized, legacy opt-in settings are ignored,
+> and telemetry opt-in is unavailable. The upstream event catalog below documents
+> upstream behavior; it does not describe active QC data collection. Cloud sync/share
+> is disabled pending an approved QC service and storage-isolation acceptance.
+
+
 This document catalogs all PostHog analytics events tracked in Nimbalyst. **This document MUST be updated whenever PostHog events are added, modified, or removed.**
 
 ## Version Tracking

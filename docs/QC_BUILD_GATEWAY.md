@@ -138,3 +138,39 @@ Steering, history-preserving forks and native review/start remain future work.
 
 The current owner process must restart to load the newly built main/renderer code.
 Never restart an active owner instance without explicit permission.
+
+
+## Optional automatic local evidence notification
+
+Add `"callback": {"url": "http://127.0.0.1:8000/api/build-control/callbacks/nimbalyst", "secret": "YOUR_PRIVATE_RANDOM_SECRET_AT_LEAST_32_CHARACTERS"}` alongside `bindings`.
+The secret must match the local platform backend's `NIMBALYST_CALLBACK_SECRET`.
+Keep this configuration outside Git and use mode 0600. Only loopback HTTP(S),
+the exact callback path, and owner-only regular configuration/outbox files are
+accepted. No live profile or server setting is changed automatically.
+
+Completed bound sessions queue metadata-only HMAC-SHA256 notifications in the
+private `qc-native-evidence-outbox.json` within user data. Delivery retries and
+resumes after restart. The outbox is bounded; preserve it for recovery rather
+than deleting failed notices. Session GET responses expose `evidenceExport`
+configuration, pending count and delivery errors. Start the configured local
+platform backend to recover delivery. It needs matching approved repository and
+native workspace bindings; callback setup alone does not authorize a checkout.
+
+The platform confirms native state and collects approved checkout differences
+against HEAD. Retries reuse receipts and identical diff artifacts. Cancelled
+sessions are acknowledged without collection. Diffs include human edits and do
+not identify one turn. Empty changes do not certify tests or shipment. Typed
+native test-result export remains pending. Native event observation only queues
+completions while the desktop is running; persisted notices survive restart.
+
+## QC privacy defaults
+
+The QC distribution does not initialize upstream PostHog or retention clients,
+including for legacy opted-in profiles. Telemetry opt-in is disabled in settings.
+Cloud collaboration settings, share authentication and sync URL/proxy entry
+paths are disabled; legacy stored sync configuration is preserved and returned
+as disabled. The Sync panel explains the unavailable configuration without
+loading cloud account state. This is not a claim that every upstream network
+path is disabled or that a QC cloud service/storage isolation is certified.
+QC collaboration endpoint, authentication and cloud tenant acceptance remain
+separate release gates. Desktop provider credentials remain native settings.

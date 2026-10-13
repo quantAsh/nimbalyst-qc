@@ -1,3 +1,4 @@
+import {requireQcCloudCollaboration} from '../../shared/qcNetworkPolicy';
 import { app, net, safeStorage } from 'electron';
 import { randomBytes, createCipheriv, createHash } from 'crypto';
 import { existsSync, promises as fs, readFileSync, unlinkSync, writeFileSync } from 'fs';
@@ -231,6 +232,7 @@ function normalizeShareExpirationDays(
  * share operation rather than risk sending an expired token.
  */
 async function getValidJwt(personalOrgId: string): Promise<string | null> {
+  requireQcCloudCollaboration();
   const cachedJwt = getPersonalSessionJwtForAccount(personalOrgId);
   try {
     const refreshed = await refreshPersonalSessionForAccount(personalOrgId);

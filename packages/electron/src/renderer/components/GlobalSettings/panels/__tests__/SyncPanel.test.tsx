@@ -12,8 +12,15 @@ vi.mock('@nimbalyst/runtime', async (importOriginal) => ({
   MaterialSymbol: ({ icon }: { icon: string }) => <span data-icon={icon} />,
 }));
 const mocks = vi.hoisted(() => ({
+  allowCollaboration:true,
   dialogRef: { current: null as { open: ReturnType<typeof vi.fn> } | null },
   accountOrgListProps: [] as Array<{ group?: { personalOrgId: string }; indented?: boolean }>,
+}));
+
+// Existing account-management cases exercise a future configured service.
+vi.mock('../../../../../shared/qcNetworkPolicy',async importOriginal=>({
+  ...await importOriginal<typeof import('../../../../../shared/qcNetworkPolicy')>(),
+  get QC_CLOUD_COLLABORATION_ENABLED(){return mocks.allowCollaboration;},
 }));
 
 /** Distinct account groups the org list was asked to render, ignoring re-renders. */
@@ -85,6 +92,7 @@ function renderAccounts(accounts: PersonalAccountSummary[], configOverrides: Rec
 
 describe('SyncPanel', () => {
   beforeEach(() => {
+    mocks.allowCollaboration=true;
     mocks.dialogRef.current = { open: vi.fn() };
     mocks.accountOrgListProps.length = 0;
     (window as any).electronAPI = {
@@ -98,6 +106,13 @@ describe('SyncPanel', () => {
   });
 
   afterEach(() => cleanup());
+
+  it('does not initialize account or sync IPC when QC collaboration is unavailable',()=>{
+    mocks.allowCollaboration=false;renderAccounts([account()]);
+    expect((window as any).electronAPI.invoke).not.toHaveBeenCalled();
+    expect((window as any).electronAPI.stytch.getAccounts).not.toHaveBeenCalled();
+    screen.getByRole('heading',{name:'Cloud collaboration unavailable'});
+  });
 
   it('does not show session and document sharing guidance in the Mobile App section', () => {
     const store = createStore();
